@@ -1,6 +1,27 @@
 import productModel from "../models/productModel.js";
+import categoryModel from "../models/categoryModel.js";
 import fs from "fs";
 import slugify from "slugify";
+import braintree from "braintree";
+import orderModel from "../models/orderModel.js";
+
+
+import dotenv from 'dotenv';
+dotenv.config();
+
+// console.log('Merchant ID:', process.env.BRAINTREE_MERCHANT_ID);
+// console.log('Public Key:', process.env.BRAINTREE_PUBLIC_KEY);
+// console.log('Private Key:', process.env.BRAINTREE_PRIVATE_KEY);
+//payment gateway
+var gateway = new braintree.BraintreeGateway({
+  environment: braintree.Environment.Sandbox,
+  merchantId: process.env.BRAINTREE_MERCHANT_ID,
+  publicKey: process.env.BRAINTREE_PUBLIC_KEY,
+  privateKey: process.env.BRAINTREE_PRIVATE_KEY,
+});
+
+
+
 
 export const createProductController = async (req, res) => {
   try {
@@ -239,5 +260,140 @@ export const productListController = async (req, res) => {
       message: "error in per page ctrl",
       error,
     });
+  }
+};
+
+// search product
+export const searchProductController = async (req, res) => {
+  try {
+    const { keyword } = req.params;
+    const resutls = await productModel
+      .find({
+        $or: [
+          { name: { $regex: keyword, $options: "i" } },
+          { description: { $regex: keyword, $options: "i" } },
+        ],
+      })
+      .select("-photo");
+    res.json(resutls);
+  } catch (error) {
+    console.log(error);
+    res.status(400).send({
+      success: false,
+      message: "Error In Search Product API",
+      error,
+    });
+  }
+};
+
+// similar products
+export const realtedProductController = async (req, res) => {
+  try {
+    const { pid, cid } = req.params;
+    const products = await productModel
+      .find({
+        category: cid,
+        _id: { $ne: pid },
+      })
+      .select("-photo")
+      .limit(3)
+      .populate("category");
+    res.status(200).send({
+      success: true,
+      products,
+    });
+  } catch (error) {
+    console.log(error);
+    res.status(400).send({
+      success: false,
+      message: "error while geting related product",
+      error,
+    });
+  }
+};
+
+// get prdocyst by catgory
+export const productCategoryController = async (req, res) => {
+  try {
+    const category = await categoryModel.findOne({ slug: req.params.slug });
+    const products = await productModel.find({ category }).populate("category");
+    res.status(200).send({
+      success: true,
+      category,
+      products,
+    });
+  } catch (error) {
+    console.log(error);
+    res.status(400).send({
+      success: false,
+      error,
+      message: "Error While Getting products",
+    });
+  }
+};
+
+//payment gateway api
+//token
+export const braintreeTokenController = async (req, res) => {
+  try {
+    gateway.clientToken.generate({}, function (err, response) {
+      if (err) {
+        console.error("Error generating client token:", err); // Log the error
+        return res.status(500).send({ error: "Failed to generate client token" });
+      } 
+      console.log("Generated client token:", response); // Log the token for debugging
+      return res.send(response); // Send the response
+    });
+  } catch (error) {
+    console.error("Unexpected error in token controller:", error); // Log unexpected errors
+    return res.status(500).send({ error: "Server error" });
+  }
+};
+
+//payment
+export const brainTreePaymentController = async (req, res) => {
+  try {
+    const { nonce, cart } = req.body;
+
+    // Validate nonce and cart
+    if (!nonce || !cart || !Array.isArray(cart)) {
+      return res.status(400).send({ error: "Invalid payment data" });
+    }
+
+    let total = 0;
+    cart.forEach((item) => {
+      total += item.price; // Ensure item.price is valid
+    });
+
+    console.log("Total amount to be charged:", total); // Log total for debugging
+
+    gateway.transaction.sale(
+      {
+        amount: total.toFixed(2), // Ensure amount is a string formatted to 2 decimal places
+        paymentMethodNonce: nonce,
+        options: {
+          submitForSettlement: true,
+        },
+      },
+      async (error, result) => {
+        if (error) {
+          console.error("Payment error:", error); // Log payment error
+          return res.status(500).send({ error: "Payment failed", details: error });
+        }
+
+        console.log("Payment successful, transaction result:", result); // Log successful payment result
+
+        const order = await new orderModel({
+          products: cart,
+          payment: result,
+          buyer: req.user._id,
+        }).save();
+
+        return res.json({ ok: true, order }); // Send back the order response
+      }
+    );
+  } catch (error) {
+    console.error("Unexpected error in payment controller:", error); // Log unexpected errors
+    return res.status(500).send({ error: "Server error" });
   }
 };

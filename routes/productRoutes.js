@@ -13,7 +13,10 @@ import {
   realtedProductController,
   productCategoryController,
   braintreeTokenController,
-  brainTreePaymentController
+  brainTreePaymentController,
+  productReviewController,
+  getProductReviewsController
+  
 
 
 } from "../controllers/productController.js";
@@ -49,6 +52,8 @@ router.get("/get-product/:slug", getSingleProductController);
 //get photo
 router.get("/product-photo/:pid", productPhotoController);
 
+
+
 //delete rproduct
 router.delete("/delete-product/:pid", deleteProductController);
 
@@ -79,5 +84,16 @@ router.get("/braintree/token", braintreeTokenController);
 
 //payments
 router.post("/braintree/payment", requireSignIn, brainTreePaymentController);
+
+
+//emial
+//router.post('/order-processing/:orderId', requireSignIn, getOrderProcessingDetails);
+
+// REVIEW PRODUCT
+router.put("/:id/review", requireSignIn, productReviewController);
+
+// get all review
+router.get("/:id/getreviews",getProductReviewsController);
+
 
 export default router;

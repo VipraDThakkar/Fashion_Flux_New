@@ -1,17 +1,18 @@
+
+import mongoose from "mongoose";
+
+
 import productModel from "../models/productModel.js";
 import categoryModel from "../models/categoryModel.js";
+import orderModel from "../models/orderModel.js";
+
 import fs from "fs";
 import slugify from "slugify";
 import braintree from "braintree";
-import orderModel from "../models/orderModel.js";
+import dotenv from "dotenv";
 
-
-import dotenv from 'dotenv';
 dotenv.config();
 
-// console.log('Merchant ID:', process.env.BRAINTREE_MERCHANT_ID);
-// console.log('Public Key:', process.env.BRAINTREE_PUBLIC_KEY);
-// console.log('Private Key:', process.env.BRAINTREE_PRIVATE_KEY);
 //payment gateway
 var gateway = new braintree.BraintreeGateway({
   environment: braintree.Environment.Sandbox,
@@ -19,9 +20,6 @@ var gateway = new braintree.BraintreeGateway({
   publicKey: process.env.BRAINTREE_PUBLIC_KEY,
   privateKey: process.env.BRAINTREE_PRIVATE_KEY,
 });
-
-
-
 
 export const createProductController = async (req, res) => {
   try {
@@ -114,22 +112,58 @@ export const getSingleProductController = async (req, res) => {
 };
 
 // get photo
+// export const productPhotoController = async (req, res) => {
+//   try {
+//     const product = await productModel.findById(req.params.pid).select("photo");
+//     if (product.photo.data) {
+//       res.set("Content-type", product.photo.contentType);
+//       return res.status(200).send(product.photo.data);
+//     }
+//   } catch (error) {
+//     console.log(error);
+//     res.status(500).send({
+//       success: false,
+//       message: "Erorr while getting photo",
+//       error,
+//     });
+//   }
+// };
+
 export const productPhotoController = async (req, res) => {
   try {
     const product = await productModel.findById(req.params.pid).select("photo");
+    if (!product) {
+      return res.status(404).send({
+        success: false,
+        message: "Product not found",
+      });
+    }
     if (product.photo.data) {
       res.set("Content-type", product.photo.contentType);
       return res.status(200).send(product.photo.data);
+    } else {
+      return res.status(404).send({
+        success: false,
+        message: "No photo available for this product",
+      });
     }
   } catch (error) {
+    if (error.name === "CastError") {
+      return res.status(400).send({
+        success: false,
+        message: "Invalid product ID format",
+      });
+    }
     console.log(error);
     res.status(500).send({
       success: false,
-      message: "Erorr while getting photo",
+      message: "Error while getting photo",
       error,
     });
   }
 };
+
+    
 
 //delete controller
 export const deleteProductController = async (req, res) => {
@@ -241,7 +275,7 @@ export const productCountController = async (req, res) => {
 // product list base on page
 export const productListController = async (req, res) => {
   try {
-    const perPage = 2;
+    const perPage = 6;
     const page = req.params.page ? req.params.page : 1;
     const products = await productModel
       .find({})
@@ -338,15 +372,13 @@ export const braintreeTokenController = async (req, res) => {
   try {
     gateway.clientToken.generate({}, function (err, response) {
       if (err) {
-        console.error("Error generating client token:", err); // Log the error
-        return res.status(500).send({ error: "Failed to generate client token" });
-      } 
-      console.log("Generated client token:", response); // Log the token for debugging
-      return res.send(response); // Send the response
+        res.status(500).send(err);
+      } else {
+        res.send(response);
+      }
     });
   } catch (error) {
-    console.error("Unexpected error in token controller:", error); // Log unexpected errors
-    return res.status(500).send({ error: "Server error" });
+    console.log(error);
   }
 };
 
@@ -354,46 +386,175 @@ export const braintreeTokenController = async (req, res) => {
 export const brainTreePaymentController = async (req, res) => {
   try {
     const { nonce, cart } = req.body;
-
-    // Validate nonce and cart
-    if (!nonce || !cart || !Array.isArray(cart)) {
-      return res.status(400).send({ error: "Invalid payment data" });
-    }
-
     let total = 0;
-    cart.forEach((item) => {
-      total += item.price; // Ensure item.price is valid
+    cart.map((i) => {
+      total += i.price;
     });
-
-    console.log("Total amount to be charged:", total); // Log total for debugging
-
-    gateway.transaction.sale(
+    let newTransaction = gateway.transaction.sale(
       {
-        amount: total.toFixed(2), // Ensure amount is a string formatted to 2 decimal places
+        amount: total,
         paymentMethodNonce: nonce,
         options: {
           submitForSettlement: true,
         },
       },
-      async (error, result) => {
-        if (error) {
-          console.error("Payment error:", error); // Log payment error
-          return res.status(500).send({ error: "Payment failed", details: error });
+      function (error, result) {
+        if (result) {
+          const order = new orderModel({
+            products: cart,
+            payment: result,
+            buyer: req.user._id,
+          }).save();
+          res.json({ ok: true });
+        } else {
+          res.status(500).send(error);
         }
-
-        console.log("Payment successful, transaction result:", result); // Log successful payment result
-
-        const order = await new orderModel({
-          products: cart,
-          payment: result,
-          buyer: req.user._id,
-        }).save();
-
-        return res.json({ ok: true, order }); // Send back the order response
       }
     );
   } catch (error) {
-    console.error("Unexpected error in payment controller:", error); // Log unexpected errors
-    return res.status(500).send({ error: "Server error" });
+    console.log(error);
+  }
+};
+
+export const productReviewController = async (req, res) => {
+  try {
+    const { comment, rating: rawRating } = req.body;
+
+    // Normalize the rating key (handle case insensitivity)
+    const rating = rawRating || req.body.RATING || req.body.Rating;
+
+    console.log("Product ID from request:", req.params.id); // Debugging line
+
+    // Ensure user is authenticated
+    if (!req.user) {
+      return res.status(401).send({
+        success: false,
+        message: "You must be logged in to leave a review",
+      });
+    }
+
+    // Validate rating
+    if (!rating || isNaN(rating) || rating < 1 || rating > 5) {
+      return res.status(400).send({
+        success: false,
+        message: "Please provide a valid rating between 1 and 5.",
+      });
+    }
+
+    // Find product by ID
+    const product = await productModel.findById(req.params.id);
+    if (!product) {
+      return res.status(404).send({
+        success: false,
+        message: "Product not found",
+      });
+    }
+
+    // Ensure reviews is an array
+    if (!Array.isArray(product.reviews)) {
+      product.reviews = []; // Initialize as an empty array if undefined
+    }
+
+    // Check if user has already reviewed
+    const alreadyReviewed = product.reviews.find(
+      (r) => r.user.toString() === req.user._id.toString()
+    );
+
+    if (alreadyReviewed) {
+      return res.status(400).send({
+        success: false,
+        message: "Product already reviewed.",
+      });
+    }
+
+    // Review object
+    const review = {
+      name: req.user.name,
+      rating: Number(rating), // Ensure rating is cast to number correctly
+      comment,
+      user: req.user._id,
+    };
+
+    // Add review to product reviews array
+    product.reviews.push(review);
+
+    // Update product review count and rating
+    product.numReviews = product.reviews.length;
+    product.rating =
+      product.reviews.reduce((acc, item) => item.rating + acc, 0) /
+      product.reviews.length;
+
+    // Save product
+    await product.save();
+
+    res.status(200).send({
+      success: true,
+      message: "Review added!",
+    });
+  } catch (error) {
+    console.log(error);
+    // Handle invalid product ID error
+    if (error.name === "CastError") {
+      return res.status(400).send({
+        success: false,
+        message: "Invalid product ID",
+      });
+    }
+    res.status(500).send({
+      success: false,
+      message: "Error in adding review",
+      error,
+    });
+  }
+};
+
+
+// Controller to get all reviews for a specific product
+export const getProductReviewsController = async (req, res) => {
+  try {
+    const productId = req.params.id; // Product ID from the request parameters
+
+    console.log("Fetching reviews for product ID:", productId); // Debugging line
+
+    // Find the product by ID
+    const product = await productModel.findById(productId);
+
+    if (!product) {
+      return res.status(404).send({
+        success: false,
+        message: "Product not found",
+      });
+    }
+
+    // Ensure the product has reviews
+    if (!Array.isArray(product.reviews) || product.reviews.length === 0) {
+      return res.status(404).send({
+        success: false,
+        message: "No reviews found for this product",
+      });
+    }
+
+    // Send reviews back to the client
+    res.status(200).send({
+      success: true,
+      message: "Reviews fetched successfully",
+      reviews: product.reviews, // Send the product's reviews array
+    });
+  } catch (error) {
+    console.log("Error fetching product reviews:", error);
+    
+    // Handle invalid product ID error
+    if (error.name === "CastError") {
+      return res.status(400).send({
+        success: false,
+        message: "Invalid product ID",
+      });
+    }
+
+    res.status(500).send({
+      success: false,
+      message: "Error in fetching reviews",
+      error,
+    });
   }
 };

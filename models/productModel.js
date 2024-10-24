@@ -1,4 +1,6 @@
 import mongoose from "mongoose";
+import reviewSchema from "./reviewModel.js"; // Import the review schema
+
 
 const productSchema = new mongoose.Schema(
   {
@@ -33,6 +35,18 @@ const productSchema = new mongoose.Schema(
     },
     shipping: {
       type: Boolean,
+    },
+    reviews: {
+      type: Array,
+      default: [], // Ensure it is an empty array by default
+    }, // Array of reviews
+    numReviews: {
+      type: Number,
+      default: 0,
+    },
+    rating: {
+      type: Number,
+      default: 0,
     },
   },
   { timestamps: true }

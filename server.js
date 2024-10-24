@@ -2,6 +2,8 @@ import express from "express";
 import colors from "colors";
 import dotenv from "dotenv";
 import morgan from "morgan";
+import imageRoutes from './routes/imageRoutes.js'; // Import image routes
+import path from 'path';
 import connectDB from "./config/db.js";
 import authRoutes from "./routes/authRoute.js"
 import categoryRoutes from "./routes/categoryRoutes.js"
@@ -30,6 +32,10 @@ app.use("/api/v1/category", categoryRoutes);
 app.use("/api/v1/product", productRoutes);
 app.use("/api/v1/coupon", couponRoutes);
 app.use('/api/v1/orders', orderRoutes);
+// Serve static files (uploads folder)
+
+// Use image routes
+app.use('/api/v1/images', imageRoutes);
 
 
 
